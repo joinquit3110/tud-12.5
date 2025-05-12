@@ -226,7 +226,7 @@ export default function DijkstraPage() {
     });
     setRfNodes(nodes);
     setRfEdges(edges);
-  }, [inputMode, nodeNamesInput, startNode, endNode, setRfNodes, setRfEdges]);
+  }, [inputMode, nodeNamesInput, startNode, endNode, setRfNodes, setRfEdges, rfNodes]);
 
   useEffect(() => {
     isTextSource.current = true;
@@ -249,9 +249,7 @@ export default function DijkstraPage() {
         setRfEdges([]);
       }
     }
-    queueMicrotask(() => {
-      isTextSource.current = false;
-    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graphInput, matrixInput, nodeNamesInput, inputMode, result?.path, convertGraphToReactFlow]);
 
   useEffect(() => {
@@ -275,7 +273,7 @@ export default function DijkstraPage() {
         setNodeNamesInput(finalNodeNamesString);
       }
     }
-  }, [rfNodes, rfEdges, inputMode, graphInput, matrixInput, nodeNamesInput]);
+  }, [rfNodes, rfEdges, inputMode, graphInput, matrixInput, nodeNamesInput, graphToAdjacencyListString, graphToAdjacencyMatrixString]);
 
   const parseAdjacencyList = (input: string): Graph | null => {
     try {
@@ -306,8 +304,12 @@ export default function DijkstraPage() {
       }
       
       return newGraph;
-    } catch (e: any) {
-      setError(`Error parsing adjacency list: ${e.message}`);
+    } catch (e: unknown) {
+      if (e instanceof Error) {
+        setError(`Error parsing adjacency list: ${e.message}`);
+      } else {
+        setError('An unknown error occurred while parsing the adjacency list.');
+      }
       return null;
     }
   };
@@ -355,8 +357,12 @@ export default function DijkstraPage() {
         }
       }
       return newGraph;
-    } catch (e: any) {
-      setError(`Error parsing adjacency matrix: ${e.message}`);
+    } catch (e: unknown) {
+      if (e instanceof Error) {
+        setError(`Error parsing adjacency matrix: ${e.message}`);
+      } else {
+        setError('An unknown error occurred while parsing the adjacency matrix.');
+      }
       return null;
     }
   };
@@ -454,7 +460,7 @@ export default function DijkstraPage() {
   return (
     <main className="flex min-h-screen flex-col items-center p-8 bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
       <div className="w-full max-w-6xl">
-        <h1 className="text-4xl font-bold text-center mb-8 text-blue-600 dark:text-blue-400">Dijkstra's Algorithm Visualizer</h1>
+        <h1 className="text-4xl font-bold text-center mb-8 text-blue-600 dark:text-blue-400">Dijkstra&apos;s Algorithm Visualizer</h1>
 
         <div className="mb-6 flex justify-center space-x-4">
           <button
@@ -617,7 +623,7 @@ export default function DijkstraPage() {
                   </div>
                 )}
                  {!error && !result && (
-                    <p className="text-gray-500 dark:text-gray-400">Enter graph data and click "Find Shortest Path" to see the results.</p>
+                    <p className="text-gray-500 dark:text-gray-400">Enter graph data and click &quot;Find Shortest Path&quot; to see the results.</p>
                 )}
             </div>
         </div>
