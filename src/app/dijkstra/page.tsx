@@ -20,7 +20,7 @@ import 'reactflow/dist/style.css';
 
 import { dijkstra, Graph, DijkstraResult } from '@/lib/dijkstra';
 
-type InputMode = 'list' | 'matrix';
+type InputMode = 'list' | 'matrix' | 'reactflow';
 
 const getInitialNodePositions = (nodeIds: string[], radius: number = 200) => {
   const positions: { [key: string]: { x: number; y: number } } = {};
@@ -66,7 +66,8 @@ export default function DijkstraPage() {
       if (!newGraph[source]) newGraph[source] = {};
       if (!newGraph[target]) newGraph[target] = {};
 
-      const weight = parseInt(edge.label as string, 10);
+      const weightLabel = typeof edge.label === 'string' ? edge.label : String(edge.label || '0');
+      const weight = parseFloat(weightLabel);
 
       if (!isNaN(weight) && weight >= 0) {
         newGraph[source][target] = weight;
@@ -127,15 +128,17 @@ export default function DijkstraPage() {
       const lines = input.trim().split('\n');
 
       for (const line of lines) {
-        if (line.trim() === '') continue;
         const parts = line.trim().split(/\s+/);
         if (parts.length !== 3) {
-          throw new Error(`Invalid line format: "${line}". Expected format: Node1 Node2 Weight`);
+          if (parts.length > 0 && parts.some(p => p.trim() !== '')) {
+            throw new Error(`Invalid line format: "${line}". Expected "Node1 Node2 Weight".`);
+          }
+          continue;
         }
         const [node1, node2, weightStr] = parts;
-        const weight = parseInt(weightStr, 10);
+        const weight = parseFloat(weightStr);
         if (isNaN(weight) || weight < 0) {
-          throw new Error(`Invalid weight: "${weightStr}" in line "${line}". Weight must be a non-negative number.`);
+          throw new Error(`Invalid weight: "${weightStr}" for edge ${node1}-${node2}. Weight must be a non-negative number.`);
         }
 
         if (!newGraph[node1]) newGraph[node1] = {};
@@ -185,12 +188,12 @@ export default function DijkstraPage() {
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i].trim().split(/\s+/);
         if (row.length !== nodeNames.length) {
-          throw new Error(`Matrix column count in row ${i + 1} (${row.length}) must match node names count (${nodeNames.length}).`);
+          throw new Error(`Matrix row ${i + 1} length (${row.length}) must match node names count (${nodeNames.length}).`);
         }
         for (let j = 0; j < row.length; j++) {
-          const weight = parseInt(row[j], 10);
-          if (isNaN(weight)) {
-            throw new Error(`Invalid matrix value "${row[j]}" at [${i + 1},${j + 1}]. Must be a number.`);
+          const weight = parseFloat(row[j]);
+          if (isNaN(weight) || weight < 0) {
+            throw new Error(`Invalid weight: "${row[j]}" at matrix[${i}][${j}]. Weight must be a non-negative number.`);
           }
           if (weight > 0) {
             newGraph[nodeNames[i]][nodeNames[j]] = weight;
@@ -235,7 +238,7 @@ export default function DijkstraPage() {
         return;
       }
 
-      const weight = parseInt(weightStr, 10);
+      const weight = parseFloat(weightStr);
       if (isNaN(weight) || weight < 0) {
         alert('Invalid weight. Please enter a non-negative number.');
         isRFSource.current = false;
@@ -269,7 +272,7 @@ export default function DijkstraPage() {
         isRFSource.current = false;
         return;
       }
-      const newWeight = parseInt(newWeightStr, 10);
+      const newWeight = parseFloat(newWeightStr);
       if (isNaN(newWeight) || newWeight < 0) {
         alert('Invalid weight. Please enter a non-negative number.');
         isRFSource.current = false;
@@ -453,7 +456,20 @@ export default function DijkstraPage() {
       }
     }
     isRFSource.current = false;
-  }, [rfNodes, rfEdges]);
+  }, [
+    rfNodes,
+    rfEdges,
+    inputMode,
+    graphInput,
+    matrixInput,
+    nodeNamesInput,
+    reactFlowToGraph,
+    graphToAdjacencyListString,
+    graphToAdjacencyMatrixString,
+    setGraphInput,
+    setMatrixInput,
+    setNodeNamesInput
+  ]);
 
   const handleAddNode = () => {
     const trimmedNodeName = newNodeName.trim();
@@ -493,9 +509,11 @@ export default function DijkstraPage() {
     setError(null);
 
     let currentGraph: Graph | null = null;
+    let graphSourceUsed: InputMode = inputMode;
 
     if (rfNodes.length > 0 || rfEdges.length > 0) {
       currentGraph = reactFlowToGraph(rfNodes, rfEdges);
+      graphSourceUsed = 'reactflow';
     } else {
       if (inputMode === 'list') {
         currentGraph = parseAdjacencyList(graphInput);
@@ -505,20 +523,21 @@ export default function DijkstraPage() {
     }
 
     if (currentGraph) {
-      const allNodesInCurrentGraph = new Set(Object.keys(currentGraph));
+      const allNodesInCurrentGraph = new Set<string>();
+      Object.keys(currentGraph).forEach((n) => allNodesInCurrentGraph.add(n));
       Object.values(currentGraph).forEach((adj) => Object.keys(adj).forEach((n) => allNodesInCurrentGraph.add(n)));
-      rfNodes.forEach((n) => allNodesInCurrentGraph.add(n.id));
+      if (graphSourceUsed === 'reactflow') {
+        rfNodes.forEach((n) => allNodesInCurrentGraph.add(n.id));
+      }
 
       if (!allNodesInCurrentGraph.has(startNode) && startNode.trim() !== '') {
         setError(`Start node "${startNode}" does not exist in the graph.`);
-        setResult(null);
-        setResult((prevState) => ({ path: [], distance: Infinity } as DijkstraResult));
+        setResult({ path: [], distance: Infinity });
         return;
       }
       if (!allNodesInCurrentGraph.has(endNode) && endNode.trim() !== '') {
         setError(`End node "${endNode}" does not exist in the graph.`);
-        setResult(null);
-        setResult((prevState) => ({ path: [], distance: Infinity } as DijkstraResult));
+        setResult({ path: [], distance: Infinity });
         return;
       }
 
@@ -535,10 +554,10 @@ export default function DijkstraPage() {
       setResult(dijkstraResult);
 
       if (!dijkstraResult || dijkstraResult.distance === Infinity) {
-        if (allNodesInCurrentGraph.has(startNode) && allNodesInCurrentGraph.has(endNode)) {
-          setError(`No path found from "${startNode}" to "${endNode}".`);
-        } else if (startNode.trim() === '' || endNode.trim() === '') {
+        if (startNode.trim() === '' || endNode.trim() === '') {
           setError('Start or End node is not specified.');
+        } else if (allNodesInCurrentGraph.has(startNode) && allNodesInCurrentGraph.has(endNode)) {
+          setError(`No path found from "${startNode}" to "${endNode}".`);
         }
       }
     } else {
