@@ -13,7 +13,8 @@ import ReactFlow, {
   Connection,
   NodeChange,
   EdgeChange,
-  MarkerType
+  MarkerType,
+  ConnectionMode
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 
@@ -49,8 +50,9 @@ export default function DijkstraPage() {
 
   const [newNodeName, setNewNodeName] = useState('');
   const isTextSource = useRef(false);
+  const isRFSource = useRef(false);
 
-  const reactFlowToGraph = (nodes: Node[], edges: Edge[]): Graph => {
+  const reactFlowToGraph = useCallback((nodes: Node[], edges: Edge[]): Graph => {
     const newGraph: Graph = {};
     nodes.forEach(node => {
       if (!newGraph[node.id]) {
@@ -72,13 +74,13 @@ export default function DijkstraPage() {
       }
     });
     return newGraph;
-  };
+  }, []);
 
-  const graphToAdjacencyListString = (graph: Graph): string => {
+  const graphToAdjacencyListString = useCallback((graph: Graph): string => {
     const lines: string[] = [];
     const addedEdges = new Set<string>();
-    Object.keys(graph).forEach(node1 => {
-      Object.keys(graph[node1]).forEach(node2 => {
+    Object.keys(graph).sort().forEach(node1 => {
+      Object.keys(graph[node1]).sort().forEach(node2 => {
         const weight = graph[node1][node2];
         const edgeKey = [node1, node2].sort().join('-');
         if (!addedEdges.has(edgeKey) && weight !== undefined) {
@@ -88,18 +90,18 @@ export default function DijkstraPage() {
       });
     });
     return lines.join('\n');
-  };
+  }, []);
 
-  const graphToAdjacencyMatrixString = (graph: Graph, currentGlobalNodeNamesStr: string): { matrixString: string, finalNodeNamesString: string } => {
+  const graphToAdjacencyMatrixString = useCallback((graph: Graph, currentGlobalNodeNamesStr: string, currentRfNodes: Node[]): { matrixString: string, finalNodeNamesString: string } => {
     const initialNodeNames = currentGlobalNodeNamesStr.split(',').map(n => n.trim()).filter(n => n);
     const allNodeIdsInGraph = new Set<string>(initialNodeNames);
-    
+
     Object.keys(graph).forEach(node => allNodeIdsInGraph.add(node));
     Object.values(graph).forEach(adj => Object.keys(adj).forEach(n => allNodeIdsInGraph.add(n)));
-    rfNodes.forEach(node => allNodeIdsInGraph.add(node.id));
+    currentRfNodes.forEach(node => allNodeIdsInGraph.add(node.id));
 
     const finalNodeNames = Array.from(allNodeIdsInGraph).filter(name => name.trim() !== '').sort();
-    
+
     const nameToIndex = new Map(finalNodeNames.map((name, i) => [name, i]));
     const size = finalNodeNames.length;
     const matrix: number[][] = Array(size).fill(null).map(() => Array(size).fill(0));
@@ -117,169 +119,12 @@ export default function DijkstraPage() {
 
     const matrixString = matrix.map(row => row.join(' ')).join('\n');
     return { matrixString, finalNodeNamesString: finalNodeNames.join(',') };
-  };
+  }, []);
 
-  const onNodesChange = useCallback(
-    (changes: NodeChange[]) => {
-      isTextSource.current = false;
-      setRfNodes((nds) => applyNodeChanges(changes, nds));
-    },
-    [setRfNodes]
-  );
-
-  const onEdgesChange = useCallback(
-    (changes: EdgeChange[]) => {
-      isTextSource.current = false;
-      setRfEdges((eds) => applyEdgeChanges(changes, eds));
-    },
-    [setRfEdges]
-  );
-
-  const onConnect = useCallback(
-    (connection: Connection) => {
-      isTextSource.current = false;
-      const weightStr = prompt('Enter weight for the new edge:');
-      if (weightStr === null) return;
-
-      const weight = parseInt(weightStr, 10);
-      if (isNaN(weight) || weight < 0) {
-        alert('Invalid weight. Please enter a non-negative number.');
-        return;
-      }
-      setRfEdges((eds) => addEdge({
-        ...connection,
-        id: `${connection.source}-${connection.target}-${Date.now()}`,
-        label: weight.toString(),
-        type: 'default',
-        markerEnd: { type: MarkerType.ArrowClosed, color: '#b1b1b7' },
-        style: { stroke: '#b1b1b7', strokeWidth: 1.5 },
-      }, eds));
-    },
-    [setRfEdges]
-  );
-
-  const onEdgeClick = useCallback(
-    (event: React.MouseEvent, edge: Edge) => {
-      isTextSource.current = false;
-      const oldWeight = edge.label;
-      const newWeightStr = prompt(`Edit weight for edge ${edge.source}-${edge.target} (current: ${oldWeight}):`, oldWeight?.toString());
-
-      if (newWeightStr === null) return;
-      const newWeight = parseInt(newWeightStr, 10);
-      if (isNaN(newWeight) || newWeight < 0) {
-        alert('Invalid weight. Please enter a non-negative number.');
-        return;
-      }
-      setRfEdges((eds) =>
-        eds.map((e) => (e.id === edge.id ? { ...e, label: newWeight.toString() } : e))
-      );
-    },
-    [setRfEdges]
-  );
-  
-  const convertGraphToReactFlow = useCallback((currentGraph: Graph, path: string[] = []) => {
-    const nodes: Node[] = [];
-    const edges: Edge[] = [];
-    const nodeIdsFromGraph = Object.keys(currentGraph);
-    
-    const allPossibleNodeIds = new Set(nodeIdsFromGraph);
-    if (inputMode === 'matrix') {
-        nodeNamesInput.split(',').map(n => n.trim()).filter(n => n).forEach(n => allPossibleNodeIds.add(n));
-    }
-    if (startNode) allPossibleNodeIds.add(startNode);
-    if (endNode) allPossibleNodeIds.add(endNode);
-
-    const finalNodeIds = Array.from(allPossibleNodeIds);
-    const positions = getInitialNodePositions(finalNodeIds);
-
-    finalNodeIds.forEach(nodeId => {
-      const existingNode = rfNodes.find(n => n.id === nodeId);
-      nodes.push({
-        id: nodeId,
-        data: { label: nodeId },
-        position: existingNode?.position || positions[nodeId] || { x: Math.random() * 400, y: Math.random() * 400 },
-        style: {
-          background: path.includes(nodeId) ? (nodeId === startNode || nodeId === endNode ? '#22c55e' : '#60a5fa') : '#fff',
-          color: path.includes(nodeId) ? 'white' : '#333',
-          border: '1px solid #22c55e',
-        }
-      });
-
-      if (currentGraph[nodeId]) {
-        Object.entries(currentGraph[nodeId]).forEach(([target, weight]) => {
-          if (finalNodeIds.includes(target)) {
-            const edgeId = `${nodeId}-${target}`;
-            const isPathEdge = path.includes(nodeId) && path.includes(target) && path.indexOf(target) === path.indexOf(nodeId) + 1;
-            edges.push({
-              id: edgeId,
-              source: nodeId,
-              target: target,
-              label: weight.toString(),
-              type: 'default',
-              animated: isPathEdge,
-              markerEnd: { type: MarkerType.ArrowClosed, color: isPathEdge ? '#22c55e' : '#b1b1b7' },
-              style: { stroke: isPathEdge ? '#22c55e' : '#b1b1b7', strokeWidth: isPathEdge ? 2.5 : 1.5 },
-            });
-          }
-        });
-      }
-    });
-    setRfNodes(nodes);
-    setRfEdges(edges);
-  }, [inputMode, nodeNamesInput, startNode, endNode, setRfNodes, setRfEdges, rfNodes]);
-
-  useEffect(() => {
-    isTextSource.current = true;
-    setError(null);
-    let graphToVisualize: Graph | null = null;
-
-    if (inputMode === 'list') {
-      graphToVisualize = parseAdjacencyList(graphInput);
-    } else {
-      graphToVisualize = parseAdjacencyMatrix(matrixInput, nodeNamesInput);
-    }
-
-    if (graphToVisualize) {
-      convertGraphToReactFlow(graphToVisualize, result?.path);
-    } else {
-      if (inputMode === 'matrix' && nodeNamesInput.trim() !== '') {
-         convertGraphToReactFlow({}, result?.path);
-      } else {
-        setRfNodes([]);
-        setRfEdges([]);
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [graphInput, matrixInput, nodeNamesInput, inputMode, result?.path, convertGraphToReactFlow]);
-
-  useEffect(() => {
-    if (isTextSource.current) {
-      return;
-    }
-
-    const currentGraph = reactFlowToGraph(rfNodes, rfEdges);
-
-    if (inputMode === 'list') {
-      const newAdjList = graphToAdjacencyListString(currentGraph);
-      if (newAdjList !== graphInput) {
-        setGraphInput(newAdjList);
-      }
-    } else {
-      const { matrixString, finalNodeNamesString } = graphToAdjacencyMatrixString(currentGraph, nodeNamesInput);
-      if (matrixString !== matrixInput) {
-        setMatrixInput(matrixString);
-      }
-      if (finalNodeNamesString !== nodeNamesInput) {
-        setNodeNamesInput(finalNodeNamesString);
-      }
-    }
-  }, [rfNodes, rfEdges, inputMode, graphInput, matrixInput, nodeNamesInput, graphToAdjacencyListString, graphToAdjacencyMatrixString]);
-
-  const parseAdjacencyList = (input: string): Graph | null => {
+  const parseAdjacencyList = useCallback((input: string): Graph | null => {
     try {
       const newGraph: Graph = {};
       const lines = input.trim().split('\n');
-      const definedNodes = new Set<string>();
 
       for (const line of lines) {
         if (line.trim() === '') continue;
@@ -295,14 +140,10 @@ export default function DijkstraPage() {
 
         if (!newGraph[node1]) newGraph[node1] = {};
         if (!newGraph[node2]) newGraph[node2] = {};
-        
+
         newGraph[node1][node2] = weight;
         newGraph[node2][node1] = weight;
-
-        definedNodes.add(node1);
-        definedNodes.add(node2);
       }
-      
       return newGraph;
     } catch (e: unknown) {
       if (e instanceof Error) {
@@ -312,29 +153,29 @@ export default function DijkstraPage() {
       }
       return null;
     }
-  };
+  }, []);
 
-  const parseAdjacencyMatrix = (matrixStr: string, nodeNamesStr: string): Graph | null => {
+  const parseAdjacencyMatrix = useCallback((matrixStr: string, nodeNamesStr: string): Graph | null => {
     try {
       const newGraph: Graph = {};
       const nodeNames = nodeNamesStr.trim().split(',').map(name => name.trim()).filter(name => name);
 
       if (nodeNames.length === 0 && matrixStr.trim() !== '') {
-          throw new Error('Node names are required for adjacency matrix if matrix data is provided.');
+        throw new Error('Node names are required for adjacency matrix if matrix data is provided.');
       }
       if (nodeNames.length === 0 && matrixStr.trim() === '') {
-          return {};
+        return {};
       }
 
       const uniqueNodeNames = new Set(nodeNames);
       if (uniqueNodeNames.size !== nodeNames.length) {
-          throw new Error('Node names must be unique.');
+        throw new Error('Node names must be unique.');
       }
 
       for (const name of nodeNames) {
         newGraph[name] = {};
       }
-      
+
       const rows = matrixStr.trim().split('\n').filter(row => row.trim() !== '');
 
       if (rows.length > 0 && rows.length !== nodeNames.length) {
@@ -349,7 +190,7 @@ export default function DijkstraPage() {
         for (let j = 0; j < row.length; j++) {
           const weight = parseInt(row[j], 10);
           if (isNaN(weight)) {
-            throw new Error(`Invalid matrix value "${row[j]}" at [${i+1},${j+1}]. Must be a number.`);
+            throw new Error(`Invalid matrix value "${row[j]}" at [${i + 1},${j + 1}]. Must be a number.`);
           }
           if (weight > 0) {
             newGraph[nodeNames[i]][nodeNames[j]] = weight;
@@ -365,92 +206,343 @@ export default function DijkstraPage() {
       }
       return null;
     }
-  };
+  }, []);
+
+  const onNodesChange = useCallback(
+    (changes: NodeChange[]) => {
+      isRFSource.current = true;
+      setRfNodes((nds) => applyNodeChanges(changes, nds));
+      queueMicrotask(() => (isRFSource.current = false));
+    },
+    [setRfNodes]
+  );
+
+  const onEdgesChange = useCallback(
+    (changes: EdgeChange[]) => {
+      isRFSource.current = true;
+      setRfEdges((eds) => applyEdgeChanges(changes, eds));
+      queueMicrotask(() => (isRFSource.current = false));
+    },
+    [setRfEdges]
+  );
+
+  const onConnect = useCallback(
+    (connection: Connection) => {
+      isRFSource.current = true;
+      const weightStr = prompt('Enter weight for the new edge:');
+      if (weightStr === null) {
+        isRFSource.current = false;
+        return;
+      }
+
+      const weight = parseInt(weightStr, 10);
+      if (isNaN(weight) || weight < 0) {
+        alert('Invalid weight. Please enter a non-negative number.');
+        isRFSource.current = false;
+        return;
+      }
+      setRfEdges((eds) =>
+        addEdge(
+          {
+            ...connection,
+            id: `${connection.source}-${connection.target}-${Date.now()}`,
+            label: weight.toString(),
+            type: 'default',
+            markerEnd: { type: MarkerType.ArrowClosed, color: '#b1b1b7' },
+            style: { stroke: '#b1b1b7', strokeWidth: 1.5 },
+          },
+          eds
+        )
+      );
+      queueMicrotask(() => (isRFSource.current = false));
+    },
+    [setRfEdges]
+  );
+
+  const onEdgeClick = useCallback(
+    (event: React.MouseEvent, edge: Edge) => {
+      isRFSource.current = true;
+      const oldWeight = edge.label;
+      const newWeightStr = prompt(`Edit weight for edge ${edge.source}-${edge.target} (current: ${oldWeight}):`, oldWeight?.toString());
+
+      if (newWeightStr === null) {
+        isRFSource.current = false;
+        return;
+      }
+      const newWeight = parseInt(newWeightStr, 10);
+      if (isNaN(newWeight) || newWeight < 0) {
+        alert('Invalid weight. Please enter a non-negative number.');
+        isRFSource.current = false;
+        return;
+      }
+      setRfEdges((eds) =>
+        eds.map((e) => (e.id === edge.id ? { ...e, label: newWeight.toString() } : e))
+      );
+      queueMicrotask(() => (isRFSource.current = false));
+    },
+    [setRfEdges]
+  );
+
+  useEffect(() => {
+    if (isRFSource.current) return;
+
+    isTextSource.current = true;
+    setError(null);
+    let graphToVisualize: Graph | null = null;
+
+    if (inputMode === 'list') {
+      graphToVisualize = parseAdjacencyList(graphInput);
+    } else {
+      graphToVisualize = parseAdjacencyMatrix(matrixInput, nodeNamesInput);
+    }
+
+    const currentPath = result?.path || [];
+
+    if (graphToVisualize) {
+      const graph = graphToVisualize;
+
+      setRfNodes((prevRfNodes) => {
+        const newNodes: Node[] = [];
+        const nodeIdsFromGraph = Object.keys(graph);
+        const allPossibleNodeIds = new Set<string>(nodeIdsFromGraph);
+        if (inputMode === 'matrix') {
+          nodeNamesInput.split(',').map((n) => n.trim()).filter((n) => n).forEach((n) => allPossibleNodeIds.add(n));
+        }
+        if (startNode.trim()) allPossibleNodeIds.add(startNode.trim());
+        if (endNode.trim()) allPossibleNodeIds.add(endNode.trim());
+
+        const finalNodeIds = Array.from(allPossibleNodeIds).filter((id) => id.trim() !== '');
+        const positions = getInitialNodePositions(finalNodeIds);
+
+        finalNodeIds.forEach((nodeId) => {
+          const existingNode = prevRfNodes.find((n) => n.id === nodeId);
+          newNodes.push({
+            id: nodeId,
+            data: { label: nodeId },
+            position: existingNode?.position || positions[nodeId] || { x: Math.random() * 400, y: Math.random() * 400 },
+            style: {
+              background: currentPath.includes(nodeId) ? (nodeId === startNode || nodeId === endNode ? '#22c55e' : '#60a5fa') : '#fff',
+              color: currentPath.includes(nodeId) ? 'white' : '#333',
+              border: '1px solid #22c55e',
+            },
+          });
+        });
+        if (
+          prevRfNodes.length === newNodes.length &&
+          prevRfNodes.every(
+            (node, i) =>
+              node.id === newNodes[i].id &&
+              JSON.stringify(node.position) === JSON.stringify(newNodes[i].position) &&
+              JSON.stringify(node.style) === JSON.stringify(newNodes[i].style)
+          )
+        ) {
+          return prevRfNodes;
+        }
+        return newNodes;
+      });
+
+      setRfEdges((prevRfEdges) => {
+        const newEdges: Edge[] = [];
+        const nodeIdsFromGraph = Object.keys(graph);
+        const allPossibleNodeIds = new Set<string>(nodeIdsFromGraph);
+        if (inputMode === 'matrix') {
+          nodeNamesInput.split(',').map((n) => n.trim()).filter((n) => n).forEach((n) => allPossibleNodeIds.add(n));
+        }
+        if (startNode.trim()) allPossibleNodeIds.add(startNode.trim());
+        if (endNode.trim()) allPossibleNodeIds.add(endNode.trim());
+        const finalNodeIds = Array.from(allPossibleNodeIds).filter((id) => id.trim() !== '');
+
+        const addedGraphEdges = new Set<string>();
+
+        finalNodeIds.forEach((nodeId) => {
+          if (graph[nodeId]) {
+            Object.entries(graph[nodeId]).forEach(([target, weight]) => {
+              if (finalNodeIds.includes(target)) {
+                const edgeKey1 = `${nodeId}-${target}`;
+                const edgeKey2 = `${target}-${nodeId}`;
+
+                if (addedGraphEdges.has(edgeKey1) || addedGraphEdges.has(edgeKey2)) return;
+
+                const isPathEdge =
+                  currentPath.includes(nodeId) &&
+                  currentPath.includes(target) &&
+                  (currentPath.indexOf(target) === currentPath.indexOf(nodeId) + 1 || currentPath.indexOf(nodeId) === currentPath.indexOf(target) + 1);
+
+                const sourceNode = nodeId < target ? nodeId : target;
+                const targetNode = nodeId < target ? target : nodeId;
+                const reactFlowEdgeId = `${sourceNode}-${targetNode}`;
+
+                newEdges.push({
+                  id: reactFlowEdgeId,
+                  source: nodeId,
+                  target: target,
+                  label: weight.toString(),
+                  type: 'default',
+                  animated: isPathEdge,
+                  markerEnd: { type: MarkerType.ArrowClosed, color: isPathEdge ? '#22c55e' : '#b1b1b7' },
+                  style: { stroke: isPathEdge ? '#22c55e' : '#b1b1b7', strokeWidth: isPathEdge ? 2.5 : 1.5 },
+                });
+                addedGraphEdges.add(edgeKey1);
+                addedGraphEdges.add(edgeKey2);
+              }
+            });
+          }
+        });
+        if (
+          prevRfEdges.length === newEdges.length &&
+          prevRfEdges.every((edge, i) => edge.id === newEdges[i].id && edge.label === newEdges[i].label && edge.animated === newEdges[i].animated)
+        ) {
+          return prevRfEdges;
+        }
+        return newEdges;
+      });
+    } else {
+      if (inputMode === 'matrix' && nodeNamesInput.trim() !== '') {
+        setRfNodes((prevRfNodes) => {
+          const nodeNames = nodeNamesInput.split(',').map((n) => n.trim()).filter((n) => n);
+          if (nodeNames.length === 0) return [];
+          const positions = getInitialNodePositions(nodeNames);
+          const newNodes = nodeNames.map((name) => {
+            const existingNode = prevRfNodes.find((n) => n.id === name);
+            return {
+              id: name,
+              data: { label: name },
+              position: existingNode?.position || positions[name] || { x: Math.random() * 400, y: Math.random() * 400 },
+              style: { background: '#fff', color: '#333', border: '1px solid #22c55e' },
+            };
+          });
+          if (
+            prevRfNodes.length === newNodes.length &&
+            prevRfNodes.every((node, i) => node.id === newNodes[i].id && JSON.stringify(node.position) === JSON.stringify(newNodes[i].position))
+          ) {
+            return prevRfNodes;
+          }
+          return newNodes;
+        });
+        setRfEdges([]);
+      } else {
+        setRfNodes([]);
+        setRfEdges([]);
+      }
+    }
+    queueMicrotask(() => {
+      isTextSource.current = false;
+    });
+  }, [graphInput, matrixInput, nodeNamesInput, inputMode, result, startNode, endNode, parseAdjacencyList, parseAdjacencyMatrix]);
+
+  useEffect(() => {
+    if (isTextSource.current || !isRFSource.current) {
+      if (isRFSource.current) isRFSource.current = false;
+      return;
+    }
+
+    const currentGraph = reactFlowToGraph(rfNodes, rfEdges);
+
+    if (inputMode === 'list') {
+      const newAdjList = graphToAdjacencyListString(currentGraph);
+      if (newAdjList !== graphInput) {
+        setGraphInput(newAdjList);
+      }
+    } else {
+      const { matrixString, finalNodeNamesString } = graphToAdjacencyMatrixString(currentGraph, nodeNamesInput, rfNodes);
+      if (matrixString !== matrixInput) {
+        setMatrixInput(matrixString);
+      }
+      if (finalNodeNamesString !== nodeNamesInput) {
+        setNodeNamesInput(finalNodeNamesString);
+      }
+    }
+    isRFSource.current = false;
+  }, [rfNodes, rfEdges]);
 
   const handleAddNode = () => {
     const trimmedNodeName = newNodeName.trim();
     if (!trimmedNodeName) {
-      alert("Node name cannot be empty.");
+      alert('Node name cannot be empty.');
       return;
     }
-    if (rfNodes.find(node => node.id === trimmedNodeName)) {
-      alert("Node with this name already exists.");
+    if (rfNodes.find((node) => node.id === trimmedNodeName)) {
+      alert('Node with this name already exists.');
       return;
     }
 
-    isTextSource.current = false;
+    isRFSource.current = true;
 
     const newNode: Node = {
       id: trimmedNodeName,
       data: { label: trimmedNodeName },
       position: { x: Math.random() * 200 + 50, y: Math.random() * 200 + 50 },
+      style: { background: '#fff', color: '#333', border: '1px solid #22c55e' },
     };
-    setRfNodes(nds => [...nds, newNode]);
+    setRfNodes((nds) => [...nds, newNode]);
 
     if (inputMode === 'matrix') {
-        setNodeNamesInput(prev => {
-            const names = prev.split(',').map(n => n.trim()).filter(n => n);
-            if (!names.includes(trimmedNodeName)) {
-                names.push(trimmedNodeName);
-            }
-            return names.sort().join(',');
-        });
+      setNodeNamesInput((prev) => {
+        const names = prev.split(',').map((n) => n.trim()).filter((n) => n);
+        if (!names.includes(trimmedNodeName)) {
+          names.push(trimmedNodeName);
+        }
+        return names.sort().join(',');
+      });
     }
     setNewNodeName('');
+    queueMicrotask(() => (isRFSource.current = false));
   };
 
   const handleRunDijkstra = () => {
     setError(null);
-    setResult(null);
+
     let currentGraph: Graph | null = null;
 
-    if (rfNodes.length > 0) {
-        currentGraph = reactFlowToGraph(rfNodes, rfEdges);
+    if (rfNodes.length > 0 || rfEdges.length > 0) {
+      currentGraph = reactFlowToGraph(rfNodes, rfEdges);
     } else {
-        if (inputMode === 'list') {
-            currentGraph = parseAdjacencyList(graphInput);
-        } else {
-            currentGraph = parseAdjacencyMatrix(matrixInput, nodeNamesInput);
-        }
+      if (inputMode === 'list') {
+        currentGraph = parseAdjacencyList(graphInput);
+      } else {
+        currentGraph = parseAdjacencyMatrix(matrixInput, nodeNamesInput);
+      }
     }
 
     if (currentGraph) {
       const allNodesInCurrentGraph = new Set(Object.keys(currentGraph));
-      Object.values(currentGraph).forEach(adj => Object.keys(adj).forEach(n => allNodesInCurrentGraph.add(n)));
+      Object.values(currentGraph).forEach((adj) => Object.keys(adj).forEach((n) => allNodesInCurrentGraph.add(n)));
+      rfNodes.forEach((n) => allNodesInCurrentGraph.add(n.id));
 
-      if (!allNodesInCurrentGraph.has(startNode) && startNode !== '') {
+      if (!allNodesInCurrentGraph.has(startNode) && startNode.trim() !== '') {
         setError(`Start node "${startNode}" does not exist in the graph.`);
-        convertGraphToReactFlow(currentGraph);
+        setResult(null);
+        setResult((prevState) => ({ path: [], distance: Infinity } as DijkstraResult));
         return;
       }
-      if (!allNodesInCurrentGraph.has(endNode) && endNode !== '') {
+      if (!allNodesInCurrentGraph.has(endNode) && endNode.trim() !== '') {
         setError(`End node "${endNode}" does not exist in the graph.`);
-        convertGraphToReactFlow(currentGraph);
+        setResult(null);
+        setResult((prevState) => ({ path: [], distance: Infinity } as DijkstraResult));
         return;
       }
-      
+
       const finalGraphForDijkstra: Graph = { ...currentGraph };
-      rfNodes.forEach(rn => {
+      rfNodes.forEach((rn) => {
         if (!finalGraphForDijkstra[rn.id]) {
           finalGraphForDijkstra[rn.id] = {};
         }
       });
+      if (startNode && !finalGraphForDijkstra[startNode]) finalGraphForDijkstra[startNode] = {};
+      if (endNode && !finalGraphForDijkstra[endNode]) finalGraphForDijkstra[endNode] = {};
 
       const dijkstraResult = dijkstra(finalGraphForDijkstra, startNode, endNode);
       setResult(dijkstraResult);
 
-      if (dijkstraResult) {
-        convertGraphToReactFlow(finalGraphForDijkstra, dijkstraResult.path);
-      } else {
+      if (!dijkstraResult || dijkstraResult.distance === Infinity) {
         if (allNodesInCurrentGraph.has(startNode) && allNodesInCurrentGraph.has(endNode)) {
-             setError(`No path found from "${startNode}" to "${endNode}".`);
-        } else {
-            setError(`Start or End node not in graph. Path not found.`);
+          setError(`No path found from "${startNode}" to "${endNode}".`);
+        } else if (startNode.trim() === '' || endNode.trim() === '') {
+          setError('Start or End node is not specified.');
         }
-        convertGraphToReactFlow(finalGraphForDijkstra);
       }
     } else {
-      setError("Could not parse the graph from the input.");
+      setError('Could not parse the graph from the input.');
       setRfNodes([]);
       setRfEdges([]);
       setResult(null);
@@ -464,14 +556,26 @@ export default function DijkstraPage() {
 
         <div className="mb-6 flex justify-center space-x-4">
           <button
-            onClick={() => setInputMode('list')}
-            className={`px-4 py-2 rounded-md font-semibold transition-colors ${inputMode === 'list' ? 'bg-blue-600 text-white' : 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600'}`}
+            onClick={() => {
+              setInputMode('list');
+              setResult(null);
+              setError(null);
+            }}
+            className={`px-4 py-2 rounded-md font-semibold transition-colors ${
+              inputMode === 'list' ? 'bg-blue-600 text-white' : 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600'
+            }`}
           >
             Adjacency List
           </button>
           <button
-            onClick={() => setInputMode('matrix')}
-            className={`px-4 py-2 rounded-md font-semibold transition-colors ${inputMode === 'matrix' ? 'bg-blue-600 text-white' : 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600'}`}
+            onClick={() => {
+              setInputMode('matrix');
+              setResult(null);
+              setError(null);
+            }}
+            className={`px-4 py-2 rounded-md font-semibold transition-colors ${
+              inputMode === 'matrix' ? 'bg-blue-600 text-white' : 'bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600'
+            }`}
           >
             Adjacency Matrix
           </button>
@@ -490,24 +594,32 @@ export default function DijkstraPage() {
                 <textarea
                   className="w-full h-48 p-3 border border-gray-300 dark:border-gray-600 rounded-md bg-gray-50 dark:bg-gray-700 focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 outline-none resize-none font-mono text-sm"
                   value={graphInput}
-                  onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setGraphInput(e.target.value)}
+                  onChange={(e: ChangeEvent<HTMLTextAreaElement>) => {
+                    setGraphInput(e.target.value);
+                    setResult(null);
+                    setError(null);
+                  }}
                   placeholder="A B 1\nB C 2"
                 />
               </>
             ) : (
               <>
                 <div className="mb-4">
-                    <label htmlFor="nodeNames" className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">
-                        Node Names (comma-separated, e.g., A,B,C):
-                    </label>
-                    <input
-                        type="text"
-                        id="nodeNames"
-                        className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-gray-50 dark:bg-gray-700 focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 outline-none"
-                        value={nodeNamesInput}
-                        onChange={(e: ChangeEvent<HTMLInputElement>) => setNodeNamesInput(e.target.value)}
-                        placeholder="A,B,C,D,E,F"
-                    />
+                  <label htmlFor="nodeNames" className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">
+                    Node Names (comma-separated, e.g., A,B,C):
+                  </label>
+                  <input
+                    type="text"
+                    id="nodeNames"
+                    className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-gray-50 dark:bg-gray-700 focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 outline-none"
+                    value={nodeNamesInput}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                      setNodeNamesInput(e.target.value);
+                      setResult(null);
+                      setError(null);
+                    }}
+                    placeholder="A,B,C,D,E,F"
+                  />
                 </div>
                 <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">
                   Enter adjacency matrix (rows separated by newlines, values by spaces). Use 0 for no direct edge.
@@ -515,119 +627,142 @@ export default function DijkstraPage() {
                 <textarea
                   className="w-full h-48 p-3 border border-gray-300 dark:border-gray-600 rounded-md bg-gray-50 dark:bg-gray-700 focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 outline-none resize-none font-mono text-sm"
                   value={matrixInput}
-                  onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setMatrixInput(e.target.value)}
+                  onChange={(e: ChangeEvent<HTMLTextAreaElement>) => {
+                    setMatrixInput(e.target.value);
+                    setResult(null);
+                    setError(null);
+                  }}
                   placeholder="0 1 4 0\n1 0 2 7\n4 2 0 1\n0 7 1 0"
                 />
               </>
             )}
+            <div className="mt-4">
+              <label htmlFor="startNode" className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">
+                Start Node:
+              </label>
+              <input
+                type="text"
+                id="startNode"
+                value={startNode}
+                onChange={(e) => {
+                  setStartNode(e.target.value.trim());
+                  setResult(null);
+                  setError(null);
+                }}
+                className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-gray-50 dark:bg-gray-700 focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 outline-none"
+              />
+            </div>
+            <div className="mt-2">
+              <label htmlFor="endNode" className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">
+                End Node:
+              </label>
+              <input
+                type="text"
+                id="endNode"
+                value={endNode}
+                onChange={(e) => {
+                  setEndNode(e.target.value.trim());
+                  setResult(null);
+                  setError(null);
+                }}
+                className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-gray-50 dark:bg-gray-700 focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 outline-none"
+              />
+            </div>
+            <button
+              onClick={handleRunDijkstra}
+              className="mt-4 w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-green-500 dark:focus:ring-green-400"
+            >
+              Find Shortest Path
+            </button>
             <div className="mt-6">
               <label htmlFor="newNodeName" className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">
                 Add New Node to Graph:
               </label>
-              <div className="flex space-x-2 mt-1">
+              <div className="flex space-x-2">
                 <input
                   type="text"
                   id="newNodeName"
                   value={newNodeName}
                   onChange={(e) => setNewNodeName(e.target.value)}
-                  placeholder="Node Name"
+                  placeholder="Node Name (e.g. G)"
                   className="flex-grow p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-gray-50 dark:bg-gray-700 focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 outline-none"
                 />
                 <button
                   onClick={handleAddNode}
-                  className="px-4 py-2 bg-green-500 hover:bg-green-600 text-white font-semibold rounded-md transition-colors"
+                  className="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-3 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400 dark:focus:ring-blue-300"
                 >
-                  Add Node
+                  Add
                 </button>
               </div>
             </div>
           </div>
 
-          <div className="md:col-span-2 bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md min-h-[500px]">
-            <h2 className="text-2xl font-semibold mb-3 text-gray-700 dark:text-gray-300">Graph Visualization</h2>
-            <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">
-                Interact with the graph: connect nodes, edit edge weights by clicking them. Select nodes/edges and press Delete/Backspace to remove.
-            </p>
-            <div style={{ height: '450px' }} className="border rounded-md border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700">
-                <ReactFlow
-                    nodes={rfNodes}
-                    edges={rfEdges}
-                    onNodesChange={onNodesChange}
-                    onEdgesChange={onEdgesChange}
-                    onConnect={onConnect}
-                    onEdgeClick={onEdgeClick}
-                    fitView
-                    attributionPosition="bottom-left"
-                    deleteKeyCode={['Backspace', 'Delete']}
-                    nodesDraggable={true}
-                    nodesConnectable={true}
-                >
-                    <MiniMap />
-                    <Controls />
-                    <Background />
-                </ReactFlow>
-            </div>
+          <div className="md:col-span-2 bg-white dark:bg-gray-800 p-1 rounded-lg shadow-md min-h-[500px] h-[600px]">
+            <ReactFlow
+              nodes={rfNodes}
+              edges={rfEdges}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onConnect={onConnect}
+              onEdgeClick={onEdgeClick}
+              fitView
+              attributionPosition="bottom-left"
+              className="bg-gray-100 dark:bg-gray-700 rounded-md"
+              deleteKeyCode={['Backspace', 'Delete']}
+              connectionMode={ConnectionMode.Loose}
+            >
+              <MiniMap
+                nodeStrokeColor={(n: Node) => {
+                  if (n.style?.background === '#22c55e') return '#22c55e';
+                  if (n.style?.background === '#60a5fa') return '#60a5fa';
+                  return '#555';
+                }}
+                nodeColor={(n: Node): string => (n.style?.background as string || '#fff')}
+                nodeBorderRadius={2}
+              />
+              <Controls />
+              <Background color="#aaa" gap={16} />
+            </ReactFlow>
           </div>
         </div>
 
-        <div className="grid md:grid-cols-2 gap-6 mb-8">
-            <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
-                <h2 className="text-2xl font-semibold mb-3 text-gray-700 dark:text-gray-300">Controls</h2>
-                <div className="mb-4">
-                  <label htmlFor="startNode" className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">Start Node:</label>
-                  <input
-                    type="text"
-                    id="startNode"
-                    className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-gray-50 dark:bg-gray-700 focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 outline-none"
-                    value={startNode}
-                    onChange={(e: ChangeEvent<HTMLInputElement>) => setStartNode(e.target.value.trim())}
-                  />
-                </div>
-                <div className="mb-6">
-                  <label htmlFor="endNode" className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">End Node:</label>
-                  <input
-                    type="text"
-                    id="endNode"
-                    className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-md bg-gray-50 dark:bg-gray-700 focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400 outline-none"
-                    value={endNode}
-                    onChange={(e: ChangeEvent<HTMLInputElement>) => setEndNode(e.target.value.trim())}
-                  />
-                </div>
-                <button
-                  onClick={handleRunDijkstra}
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-md transition duration-150 ease-in-out focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 dark:bg-blue-500 dark:hover:bg-blue-600"
-                >
-                  Find Shortest Path
-                </button>
-            </div>
-            <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
-                {(error || result) && (
-                    <h2 className="text-2xl font-semibold mb-3 text-gray-700 dark:text-gray-300">Output</h2>
-                )}
-                {error && (
-                  <div className="bg-red-100 dark:bg-red-900 border border-red-400 dark:border-red-700 text-red-700 dark:text-red-200 px-4 py-3 rounded-md relative mb-6" role="alert">
-                    <strong className="font-bold">Error: </strong>
-                    <span className="block sm:inline">{error}</span>
-                  </div>
-                )}
+        <div className="grid md:grid-cols-1 gap-6 mb-8">
+          <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
+            {(error || (result && result.path && result.path.length > 0)) && (
+              <h2 className="text-2xl font-semibold mb-3 text-gray-700 dark:text-gray-300">Output</h2>
+            )}
+            {error && (
+              <div
+                className="bg-red-100 dark:bg-red-900 border border-red-400 dark:border-red-700 text-red-700 dark:text-red-200 px-4 py-3 rounded-md relative mb-6"
+                role="alert"
+              >
+                <strong className="font-bold">Error: </strong>
+                <span className="block sm:inline">{error}</span>
+              </div>
+            )}
 
-                {result && (
-                  <div className="bg-green-50 dark:bg-green-800 p-4 rounded-lg shadow-inner">
-                    <h3 className="text-xl font-semibold mb-2 text-green-700 dark:text-green-300">Shortest Path Found</h3>
-                    <p className="text-lg text-gray-800 dark:text-gray-200">
-                      <span className="font-medium">Path: </span> {result.path.join(' → ')}
-                    </p>
-                    <p className="text-lg text-gray-800 dark:text-gray-200">
-                      <span className="font-medium">Distance: </span> {result.distance}
-                    </p>
-                  </div>
-                )}
-                 {!error && !result && (
-                    <p className="text-gray-500 dark:text-gray-400">Enter graph data and click &quot;Find Shortest Path&quot; to see the results.</p>
-                )}
-            </div>
+            {result && result.path && result.path.length > 0 && result.distance !== Infinity && (
+              <div className="bg-green-50 dark:bg-green-800 p-4 rounded-lg shadow-inner">
+                <h3 className="text-xl font-semibold mb-2 text-green-700 dark:text-green-300">Shortest Path Found</h3>
+                <p className="text-lg text-gray-800 dark:text-gray-200">
+                  <span className="font-medium">Path: </span> {result.path.join(' → ')}
+                </p>
+                <p className="text-lg text-gray-800 dark:text-gray-200">
+                  <span className="font-medium">Distance: </span> {result.distance}
+                </p>
+              </div>
+            )}
+            {!error && (!result || !result.path || result.path.length === 0 || result.distance === Infinity) && !(startNode.trim() === '' || endNode.trim() === '') && (
+              <p className="text-gray-500 dark:text-gray-400">
+                Enter graph data, start/end nodes, and click &quot;Find Shortest Path&quot; to see the results. If a path is not found after calculation, it
+                will be indicated here.
+              </p>
+            )}
+            {(startNode.trim() === '' || endNode.trim() === '') && !error && (
+              <p className="text-gray-500 dark:text-gray-400">Please specify both Start and End nodes.</p>
+            )}
+          </div>
         </div>
-
       </div>
     </main>
   );
